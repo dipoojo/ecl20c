@@ -43,11 +43,11 @@ class TrajectCR_Dataset(Dataset):
 
 class TrajectCR_Dataset_Dynamic(Dataset):
     
-    def __init__(self, train_seq, switch_cost, mute=False):
+    def __init__(self, train_seq, train_target_seq, switch_cost, mute=False):
 
         num_seq = train_seq.shape[0]
         optimal_cost_array = np.zeros(num_seq)
-        optimal_action_array = np.zeros(num_seq,train_seq.shape[1],1)
+        optimal_action_array = np.zeros((num_seq,train_seq.shape[1],1))
         
         print("Calculating Offline Optimal values ...")
         if mute:
@@ -62,6 +62,7 @@ class TrajectCR_Dataset_Dynamic(Dataset):
             optimal_action_array[i,:,:] = optimal_action
 
         self.X_dataset = torch.from_numpy(train_seq).float()
+        self.Y_dataset = torch.from_numpy(train_target_seq).float()
         self.input_dim = self.X_dataset.size(2)
         self.sequence_length = self.X_dataset.size(1)
         #self.optimal_cost_array = optimal_cost_array   #changed this to torch to try to fix error in dynamic code
@@ -73,8 +74,9 @@ class TrajectCR_Dataset_Dynamic(Dataset):
 
     def __getitem__(self, idx):  
         original_data = self.X_dataset[idx, :, :]
+        original_target = self.Y_dataset[idx, :, :]
         optimal_cost = self.optimal_cost_array[idx]
         optimal_action = self.optimal_action_array[idx,:,:]
         
-        return original_data, optimal_cost, optimal_action
+        return original_data, original_target, optimal_cost, optimal_action
   

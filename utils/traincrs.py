@@ -21,6 +21,18 @@ from tqdm import tqdm
 import json 
 import argparse
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+handler = logging.FileHandler('result/pytorch_2_log.txt')
+
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+formatter.maxStringLength = 1000
+
+handler.setFormatter(formatter)
+
+logger.addHandler(handler)
+
 n_iter = 0
 n_iter_val = 0
 use_cuda = False
@@ -166,7 +178,7 @@ def train_cr_vals_dynamic(ml_model, optimizer, train_dataloader, val_dataloader,
     from utils.loss import object_loss_cost as objl
     from utils.loss import object_loss_cr as objlr
     global n_iter, n_iter_val, use_cuda
-    logging.basicConfig(filename = 'result/result_log.txt')
+    #logging.basicConfig(filename = 'result/result_log.txt')
     #random.seed(10)
     #np.random.seed(10)
     #torch.manual_seed(10)
@@ -178,7 +190,7 @@ def train_cr_vals_dynamic(ml_model, optimizer, train_dataloader, val_dataloader,
     
     for epoch in epoch_iter:
         ml_model.train()
-        for k, (demand,opt_cost) in enumerate(train_dataloader):
+        for k, (demand,target, opt_cost, opt_action) in enumerate(train_dataloader):
             demand = demand.float()
             opt_cost = torch.reshape(opt_cost, (opt_cost.shape[0], 1))
             
@@ -188,7 +200,7 @@ def train_cr_vals_dynamic(ml_model, optimizer, train_dataloader, val_dataloader,
             # zero the parameter gradients
             optimizer.zero_grad()
             
-            action_ml, p2, opt_action, opt_cost, xtild = ml_model(demand, opt_cost, calib = calib)
+            action_ml, p2, opt_action, opt_cost, xtild = ml_model(demand, target, opt_cost, calib = calib)
             
             
             if mtl_weight == 1.0:
@@ -202,13 +214,15 @@ def train_cr_vals_dynamic(ml_model, optimizer, train_dataloader, val_dataloader,
             else:
                 loss_ml = objlr(demand, action_ml, opt_cost, min_cr = min_cr, c=switch_weight)
                 
-                action_calib, p2_calib, opt_action, opt_cost, xtild  = ml_model(demand, opt_cost, calib = calib)
+                action_calib, p2_calib, opt_action, opt_cost, xtild  = ml_model(demand, target, opt_cost, calib = calib)
                 loss_calib = object_loss_cost(demand, action_calib, c = switch_weight)
                 
                 loss = mtl_weight*loss_ml + (1-mtl_weight)*loss_calib
                 #print(f'final loss is {loss}')
 
             loss.backward()
+            # Gradient clipping
+            torch.nn.utils.clip_grad_value_(ml_model.parameters(), clip_value=1)
             optimizer.step()
 #updated names to include scalars for easy tracking
             #writer.add_scalar(f'Loss_train/no_calib_{l_1}_{l_2}_{l_3}', loss_ml.item(), n_iter)
@@ -224,7 +238,7 @@ def train_cr_vals_dynamic(ml_model, optimizer, train_dataloader, val_dataloader,
         with torch.no_grad():
             val_iter = 0
             loss_val_calib = 0
-            for _, (demand,opt_cost) in enumerate(val_dataloader):
+            for _, (demand,target, opt_cost, opt_action) in enumerate(val_dataloader):
                 demand = demand.float()
                 val_iter += 1
                 opt_cost = torch.reshape(opt_cost, (opt_cost.shape[0], 1))
@@ -240,8 +254,8 @@ def train_cr_vals_dynamic(ml_model, optimizer, train_dataloader, val_dataloader,
                     #demand = demand.type('torch.FloatTensor')
                     #opt_cost = opt_cost.type('torch.FloatTensor')
                     #action_ml = ml_model(demand, torch.from_numpy(opt_cost).float(), calib = calib)
-                action_ml, p2_val, opt_action, opt_cost, xtild = ml_model(demand, opt_cost, mode="val", calib = False)
-                action_val_calib, p2_val_calib, opt_action, opt_cost, xtild  = ml_model(demand, opt_cost, mode="val", calib = input_dict["testcalib"])
+                action_ml, p2_val, opt_action, opt_cost, xtild = ml_model(demand, target, opt_cost, mode="val", calib = False)
+                action_val_calib, p2_val_calib, opt_action, opt_cost, xtild  = ml_model(demand, target, opt_cost, mode="val", calib = input_dict["testcalib"])
                 loss_val_calib += object_loss_cost(demand, action_val_calib, c = switch_weight)
                 #print(f'demand validation dynamic = {demand.shape}')
             #action_val_ml    = ml_model(demand_validation, opt_cost_dynamic, mode="val", calib=False)
@@ -259,11 +273,11 @@ def train_cr_vals_dynamic(ml_model, optimizer, train_dataloader, val_dataloader,
         n_iter_val += 1
         if epoch > num_epoch-3:
             for i in range(1,4): #journal change originally 5 changed to 4 to exclude all quarters
-                logging.info(f'Epoch is {epoch}; quarter is {i+1}')
+                logger.info(f'Epoch is {epoch}; quarter is {i+1}')
                 temp_action_seq = torch.zeros(temp_seq[i].shape)
                 temp_action_seq.shape
                 ml_model.eval()
-                for _, (demand,opt_cost) in enumerate(temp_dataloader[i]):
+                for _, (demand,target, opt_cost, opt_action) in enumerate(temp_dataloader[i]):
                         demand = demand.float()
                         
                         opt_cost = torch.reshape(opt_cost, (opt_cost.shape[0], 1))
@@ -279,10 +293,19 @@ def train_cr_vals_dynamic(ml_model, optimizer, train_dataloader, val_dataloader,
                         #demand = demand.type('torch.FloatTensor')
                         #opt_cost = opt_cost.type('torch.FloatTensor')
                         #action_ml = ml_model(demand, torch.from_numpy(opt_cost).float(), calib = calib)
-                        tmval, p2_test, opt_action, opt_cost, xtild = ml_model(demand, opt_cost, mode="val", calib = input_dict['testcalib'])
-                        logging.info(f'Optimal action: {opt_action}')
-                        logging.info(f'Optimal cost: {opt_cost}')
-                        logging.info(f'NN output: {xtild}')
+                        tmval, p2_test, opt_action, opt_cost, xtild = ml_model(demand, target, opt_cost, mode="val", calib = input_dict['testcalib'])
+                        logger.info(f'Optimal action shape is: {opt_action.shape}')
+                        logger.info(f'Optimal action: {opt_action[0,:,:].flatten().tolist()}')
+                        logger.info(f'Optimal cost shape is: {opt_cost.shape}')
+                        logger.info(f'Optimal cost: {opt_cost[0,:].flatten().tolist()}')
+                        logger.info(f'NN shape is: {xtild.shape}')
+                        logger.info(f'NN output: {xtild[0:2,:,:].flatten().tolist()}')
+                        logger.info(f'Final output shape is: {tmval.shape}')
+                        logger.info(f'Final output: {tmval[0,:,:].flatten().tolist()}')
+                        logger.info(f'Rho shape is: {p2_test.shape}')
+                        logger.info(f'Rho output: {p2_test[0,:].flatten().tolist()}')
+                        logger.info(f'Original sequence shape: {temp_seq[i].shape}')
+                        logger.info(f'Original Sequence is: {temp_seq[i][0,:,:].tolist()}')
                 #tmval = lstm(torch.from_numpy(temp_seq).float(), torch.from_numpy(op_val_cost_array).float(),mode="val", calib=input_dict["testcalib"])
                 #tmval = lstm(temp_dataloader,mode="val", calib=input_dict["testcalib"])
                 #print(tmval.shape)
@@ -311,11 +334,11 @@ def train_cr_vals_dynamic(ml_model, optimizer, train_dataloader, val_dataloader,
                 #df_testp.loc[len(df_test.index)] = [epoch, input_dict["name"], i+1]
                 df_test.loc[len(df_test.index)] = [ epoch,input_dict["name"], i+1, average_cost_value, cr_value]
                 #return [average_cost_value, cr_value]
-                if epoch == (num_epoch-1):
-                     dict_list = [input_dict["name"]]*p2_test.shape[0]
-                     quarter_list = [i+1]*norm_cost.shape[0]
-                     df_temp = pd.DataFrame({list(df_testp.columns.values)[0]:dict_list, list(df_testp.columns.values)[1]:quarter_list, list(df_testp.columns.values)[2]:p2_test.flatten().tolist(), list(df_testp.columns.values)[3]:norm_cost.flatten().tolist()}) 
-                     df_testp.loc[range((i-1)*p2_test.shape[0],(i)*p2_test.shape[0])] = df_temp.values
+                #if epoch == (num_epoch-1):
+                    # dict_list = [input_dict["name"]]*p2_test.shape[0]
+                    # quarter_list = [i+1]*norm_cost.shape[0]
+                    # df_temp = pd.DataFrame({list(df_testp.columns.values)[0]:dict_list, list(df_testp.columns.values)[1]:quarter_list, list(df_testp.columns.values)[2]:p2_test.flatten().tolist(), list(df_testp.columns.values)[3]:norm_cost.flatten().tolist()}) 
+                    # df_testp.loc[range((i-1)*p2_test.shape[0],(i)*p2_test.shape[0])] = df_temp.values
             #print(f'norm cost {norm_cost.shape}, rho {p2_test.shape}') #journal change
         if epoch%5 == 0:
            print(epoch)        

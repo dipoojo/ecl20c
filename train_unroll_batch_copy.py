@@ -251,10 +251,7 @@ if __name__ == "__main__":
 
 
 
-
-    '''
-    def ltwo(l1, l3,m,alp):
-        l2 = (m*l1/(2*B))*(math.sqrt((1+(B/m)*(l3/l1))**2 + 4*B**2/(alp*m)) + 1 - 2/l1 - (B/m)*(l3/l1))
+    '''l2 = (m*l1/(2*B))*(math.sqrt((1+(B/m)*(l3/l1))**2 + 4*B**2/(alp*m)) + 1 - 2/l1 - (B/m)*(l3/l1))
         return l2
 
     def optimal_cost_calc(raw_data, seq_length):
